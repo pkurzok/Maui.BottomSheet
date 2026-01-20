@@ -95,6 +95,74 @@ public sealed class MauiBottomSheet : UIView, IEnumerable<UIView>
     }
 
     /// <summary>
+    /// Attempts to find a valid UIWindow from various sources, handling modal pages and regions.
+    /// Tries multiple strategies to locate the window when the direct reference is not available.
+    /// </summary>
+    /// <returns>A UIWindow if found, null otherwise.</returns>
+    private UIWindow? FindWindow()
+    {
+        // 1. Try the direct Window property first
+        if (Window is not null)
+        {
+            return Window;
+        }
+
+        // 2. Try to get window from the parent's platform view
+        if (_virtualView?.Parent?.ToPlatform(_mauiContext) is UIView parentView)
+        {
+            if (parentView.Window is not null)
+            {
+                return parentView.Window;
+            }
+        }
+
+        // 3. Try to traverse up the MAUI element hierarchy to find a page with a window
+        Element? element = _virtualView?.Parent;
+        while (element is not null)
+        {
+            if (element is Page page && page.Handler?.PlatformView is UIView pageView)
+            {
+                if (pageView.Window is not null)
+                {
+                    return pageView.Window;
+                }
+            }
+            element = element.Parent;
+        }
+
+        // 4. Try Application.Current.Windows as fallback
+        if (Application.Current?.Windows is { Count: > 0 } windows)
+        {
+            foreach (var window in windows)
+            {
+                if (window.Handler?.PlatformView is UIWindow uiWindow)
+                {
+                    return uiWindow;
+                }
+            }
+        }
+
+        // 5. Use UIApplication.SharedApplication.KeyWindow
+        var keyWindow = UIApplication.SharedApplication.KeyWindow;
+        if (keyWindow is not null)
+        {
+            return keyWindow;
+        }
+
+        // 6. For iOS 15+, use connected scenes
+        if (OperatingSystem.IsIOSVersionAtLeast(15))
+        {
+            var scene = UIApplication.SharedApplication.ConnectedScenes
+                .OfType<UIWindowScene>()
+                .FirstOrDefault(s => s.ActivationState == UISceneActivationState.ForegroundActive);
+
+            return scene?.Windows.FirstOrDefault(w => w.IsKeyWindow) ?? scene?.Windows.FirstOrDefault();
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Opens the bottom sheet asynchronously, initializing the required states and configurations.
     /// </summary>
     /// <param name="force">A boolean indicating whether to forcefully open the bottom sheet, even if not attached to the window.</param>
@@ -136,13 +204,21 @@ public sealed class MauiBottomSheet : UIView, IEnumerable<UIView>
 
         _virtualView.OnOpeningBottomSheet();
 
-        if (Window is null
-            && _virtualView.Parent.ToPlatform(_mauiContext) is UIView parent)
+        // Use robust window discovery that handles modal pages and regions
+        UIWindow? targetWindow = FindWindow();
+
+        if (targetWindow is null)
         {
-            parent.Window?.AddSubview(this);
+            return;
         }
 
-        await _bottomSheet.OpenAsync(Window).ConfigureAwait(true);
+        // Ensure we're added to the window's view hierarchy if needed
+        if (Window is null)
+        {
+            targetWindow.AddSubview(this);
+        }
+
+        await _bottomSheet.OpenAsync(targetWindow).ConfigureAwait(true);
 
         SetPeekHeight();
         SetFrame();
