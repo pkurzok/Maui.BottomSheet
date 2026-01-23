@@ -411,12 +411,17 @@ public sealed class MauiBottomSheet : UIView, IEnumerable<UIView>
                 }
             }
 
-            if (closed == false)
+            if (closed == false
+                && _bottomSheet is not null    
+                && _virtualView is not null)   
             {
                 _bottomSheet.State = _virtualView.CurrentState;
             }
 
-            _virtualView.IsOpen = closed == false;
+            if (_virtualView is not null)      
+            {
+                _virtualView.IsOpen = closed == false;
+            }
         }
         catch (Exception ex)
         {
